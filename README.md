@@ -58,7 +58,7 @@ pip install customtkinter opencv-python Pillow
 ## Usage
 
 1. **Launch the Application**:
-   - Run `python capcut_clone.py` to open the GUI.
+   - Run `python captionedit.py` to open the GUI.
 
 2. **Upload a Video**:
    - Click "Upload Video" and select a supported video file.
@@ -80,7 +80,7 @@ pip install customtkinter opencv-python Pillow
 
 ## File Structure
 
-- `capcut_clone.py`: Main application script.
+- `captionedit.py`: Main application script.
 - `requirements.txt`: List of Python dependencies.
 - `README.md`: This file.
 
