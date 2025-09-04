@@ -52,7 +52,7 @@ pip install customtkinter opencv-python Pillow
 4. Run the application:
 
    ```bash
-   python capcut_clone.py
+   python captionedit.py
    ```
 
 ## Usage
