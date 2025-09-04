@@ -1,6 +1,6 @@
 # caption tool for video
 
-A Python-based desktop application that replicates the captioning functionality of CapCut, allowing users to add, edit, and export videos with captions. Built with `customtkinter`, `tkinter`, `OpenCV`, and `Pillow`, this tool provides an intuitive interface for video editing with a focus on caption management.
+A Python-based desktop application that replicates the captioning functionality of editing app, allowing users to add, edit, and export videos with captions. Built with `customtkinter`, `tkinter`, `OpenCV`, and `Pillow`, this tool provides an intuitive interface for video editing with a focus on caption management.
 
 ## Features
 
