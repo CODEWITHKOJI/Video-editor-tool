@@ -1,0 +1,27 @@
+
+
+```txt
+customtkinter
+opencv-python
+pillow
+numpy
+```
+
+### ✅ Explanation:
+
+* `customtkinter` → modern Tkinter UI
+* `opencv-python` → OpenCV for video processing
+* `pillow` → for image/text rendering on frames
+* `numpy` → for handling image/video arrays
+
+### ⚡ Optional (but useful if you add features):
+
+* `tkinter` → **no need to install**, it comes with Python by default
+* `platform`, `os`, `json`, `datetime`, `threading` → all are **Python standard library**
+
+So, your **install command** will be:
+
+```bash
+pip install customtkinter opencv-python pillow numpy
+```
+
