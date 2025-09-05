@@ -9,6 +9,7 @@ from datetime import timedelta
 import numpy as np
 import threading
 import platform
+import subprocess
 
 # App setup
 ctk.set_appearance_mode("dark")
@@ -16,7 +17,7 @@ ctk.set_default_color_theme("blue")
 
 app = ctk.CTk()
 app.geometry("1400x900")
-app.title("CapCut Caption Clone")
+app.title("Caption tool")
 
 # Global variables
 video_path = None
@@ -29,10 +30,54 @@ captions = []
 caption_buttons = []
 selected_caption = None
 playback_speed = 1.0
+available_fonts = []
+
+# Get available fonts
+def get_system_fonts():
+    fonts = []
+    try:
+        if platform.system() == "Windows":
+            # Windows font directory
+            font_dir = os.path.join(os.environ['WINDIR'], 'Fonts')
+            for font_file in os.listdir(font_dir):
+                if font_file.endswith(('.ttf', '.ttc', '.otf')):
+                    fonts.append(font_file)
+        elif platform.system() == "Darwin":  # macOS
+            font_dirs = [
+                '/Library/Fonts',
+                '/System/Library/Fonts',
+                os.path.expanduser('~/Library/Fonts')
+            ]
+            for font_dir in font_dirs:
+                if os.path.exists(font_dir):
+                    for font_file in os.listdir(font_dir):
+                        if font_file.endswith(('.ttf', '.ttc', '.otf')):
+                            fonts.append(font_file)
+        else:  # Linux
+            font_dirs = [
+                '/usr/share/fonts',
+                '/usr/local/share/fonts',
+                os.path.expanduser('~/.fonts')
+            ]
+            for font_dir in font_dirs:
+                if os.path.exists(font_dir):
+                    for root, dirs, files in os.walk(font_dir):
+                        for font_file in files:
+                            if font_file.endswith(('.ttf', '.ttc', '.otf')):
+                                fonts.append(font_file)
+    except Exception as e:
+        print(f"Error loading fonts: {e}")
+    
+    # Add default fonts as fallback
+    fonts.extend(['arial.ttf', 'DejaVuSans.ttf'])
+    return sorted(list(set(fonts)))
+
+# Initialize available fonts
+available_fonts = get_system_fonts()
 
 # Caption class
 class Caption:
-    def __init__(self, text, x, y, start_frame, end_frame, font_size=24, color="white"):
+    def __init__(self, text, x, y, start_frame, end_frame, font_size=24, color="white", font_name="arial.ttf"):
         self.text = text
         self.x = x
         self.y = y
@@ -40,6 +85,7 @@ class Caption:
         self.end_frame = end_frame
         self.font_size = font_size
         self.color = color
+        self.font_name = font_name
         self.canvas_id = None
         self.selected = False
     
@@ -51,7 +97,8 @@ class Caption:
             "start_frame": self.start_frame,
             "end_frame": self.end_frame,
             "font_size": self.font_size,
-            "color": self.color
+            "color": self.color,
+            "font_name": self.font_name
         }
     
     @classmethod
@@ -63,13 +110,39 @@ class Caption:
             data["start_frame"],
             data["end_frame"],
             data.get("font_size", 24),
-            data.get("color", "white")
+            data.get("color", "white"),
+            data.get("font_name", "arial.ttf")
         )
 
 # Font handling
-def get_font(size):
+def get_font(font_name, size):
     try:
-        return ImageFont.truetype("arial.ttf", size)
+        if platform.system() == "Windows":
+            font_path = os.path.join(os.environ['WINDIR'], 'Fonts', font_name)
+        else:
+            # Try to find the font in common directories
+            font_path = None
+            font_dirs = [
+                '/Library/Fonts',
+                '/System/Library/Fonts',
+                os.path.expanduser('~/Library/Fonts'),
+                '/usr/share/fonts',
+                '/usr/local/share/fonts',
+                os.path.expanduser('~/.fonts')
+            ]
+            
+            for font_dir in font_dirs:
+                if os.path.exists(font_dir):
+                    potential_path = os.path.join(font_dir, font_name)
+                    if os.path.exists(potential_path):
+                        font_path = potential_path
+                        break
+            
+            if not font_path:
+                # Fallback to default font
+                return ImageFont.truetype("arial.ttf", size) if "arial.ttf" in available_fonts else ImageFont.load_default()
+        
+        return ImageFont.truetype(font_path, size)
     except:
         try:
             return ImageFont.truetype("DejaVuSans.ttf", size)
@@ -150,7 +223,7 @@ def show_frame(frame_index):
     
     for caption in captions:
         if caption.start_frame <= current_frame <= caption.end_frame:
-            font = get_font(caption.font_size)
+            font = get_font(caption.font_name, caption.font_size)
             outline_color = "yellow" if caption.selected else None
             if outline_color:
                 draw.text((caption.x-1, caption.y-1), caption.text, font=font, fill=outline_color)
@@ -295,6 +368,12 @@ def select_caption(caption):
         font_size_slider.set(caption.font_size)
         color_entry.delete(0, tk.END)
         color_entry.insert(0, caption.color)
+        
+        # Set the font dropdown to the caption's font
+        if caption.font_name in available_fonts:
+            font_dropdown.set(caption.font_name)
+        else:
+            font_dropdown.set("arial.ttf")
     
     show_frame(current_frame)
 
@@ -315,6 +394,7 @@ def update_caption_properties():
         selected_caption.text = caption_text.get()
         selected_caption.font_size = int(font_size_slider.get())
         selected_caption.color = color_entry.get()
+        selected_caption.font_name = font_dropdown.get()
         
         show_frame(current_frame)
         update_caption_list()
@@ -326,7 +406,7 @@ def update_caption_list():
     for i, caption in enumerate(captions):
         btn = ctk.CTkButton(
             caption_list_frame,
-            text=f"{i+1}. {caption.text}",
+            text=f"{i+1}. {caption.text[:20]}{'...' if len(caption.text) > 20 else ''}",
             command=lambda c=caption: select_caption(c)
         )
         btn.pack(fill="x", pady=2)
@@ -347,13 +427,14 @@ def delete_selected_caption():
         font_size_slider.set(24)
         color_entry.delete(0, tk.END)
         color_entry.insert(0, "white")
+        font_dropdown.set("arial.ttf")
 
 # Dragging captions
 drag_data = {"x": 0, "y": 0, "caption": None}
 
 def on_drag_start(event):
     for caption in captions:
-        font = get_font(caption.font_size)
+        font = get_font(caption.font_name, caption.font_size)
         bbox = font.getbbox(caption.text)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
@@ -489,7 +570,7 @@ def export_video():
             
             for caption in captions:
                 if caption.start_frame <= frame_num <= caption.end_frame:
-                    font = get_font(caption.font_size)
+                    font = get_font(caption.font_name, caption.font_size)
                     x = int(caption.x * x_scale)
                     y = int(caption.y * y_scale)
                     draw.text((x, y), caption.text, font=font, fill=caption.color)
@@ -505,6 +586,61 @@ def export_video():
         app.after(0, lambda: messagebox.showinfo("Success", "Video exported successfully"))
     
     threading.Thread(target=export_thread, daemon=True).start()
+
+def download_clip():
+    if not video_path or not cap:
+        messagebox.showerror("Error", "No video loaded")
+        return
+    
+    # Create a simple dialog to select start and end time
+    clip_dialog = ctk.CTkToplevel(app)
+    clip_dialog.title("Download Clip")
+    clip_dialog.geometry("400x200")
+    
+    ctk.CTkLabel(clip_dialog, text="Start Time (seconds):").pack(pady=5)
+    start_time_entry = ctk.CTkEntry(clip_dialog)
+    start_time_entry.pack(pady=5)
+    start_time_entry.insert(0, "0")
+    
+    ctk.CTkLabel(clip_dialog, text="End Time (seconds):").pack(pady=5)
+    end_time_entry = ctk.CTkEntry(clip_dialog)
+    end_time_entry.pack(pady=5)
+    end_time_entry.insert(0, str(int(total_frames / video_fps)))
+    
+    def process_clip():
+        try:
+            start_time = float(start_time_entry.get())
+            end_time = float(end_time_entry.get())
+            
+            if start_time < 0 or end_time > total_frames / video_fps or start_time >= end_time:
+                messagebox.showerror("Error", "Invalid time range")
+                return
+            
+            output_path = filedialog.asksaveasfilename(
+                defaultextension=".mp4",
+                filetypes=[("MP4 files", "*.mp4")]
+            )
+            if not output_path:
+                return
+            
+            # Use ffmpeg to extract the clip
+            cmd = [
+                'ffmpeg', '-i', video_path,
+                '-ss', str(start_time),
+                '-to', str(end_time),
+                '-c', 'copy',
+                output_path
+            ]
+            
+            # Run the command
+            subprocess.run(cmd, check=True)
+            messagebox.showinfo("Success", "Clip downloaded successfully")
+            clip_dialog.destroy()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to download clip: {str(e)}")
+    
+    ctk.CTkButton(clip_dialog, text="Download Clip", command=process_clip).pack(pady=20)
 
 # Cleanup
 def cleanup():
@@ -578,25 +714,34 @@ font_size_slider = ctk.CTkSlider(props_frame, from_=10, to=72, number_of_steps=6
 font_size_slider.set(24)
 font_size_slider.grid(row=3, column=1, sticky="ew", padx=5, pady=2)
 
-ctk.CTkLabel(props_frame, text="Color:").grid(row=4, column=0, sticky="w", padx=5, pady=2)
+ctk.CTkLabel(props_frame, text="Font:").grid(row=4, column=0, sticky="w", padx=5, pady=2)
+font_dropdown = ctk.CTkOptionMenu(props_frame, values=available_fonts)
+font_dropdown.set("arial.ttf")
+font_dropdown.grid(row=4, column=1, sticky="ew", padx=5, pady=2)
+
+ctk.CTkLabel(props_frame, text="Color:").grid(row=5, column=0, sticky="w", padx=5, pady=2)
 color_entry = ctk.CTkEntry(props_frame)
 color_entry.insert(0, "white")
-color_entry.grid(row=4, column=1, sticky="ew", padx=5, pady=2)
+color_entry.grid(row=5, column=1, sticky="ew", padx=5, pady=2)
 
 update_btn = ctk.CTkButton(props_frame, text="Update", command=update_caption_properties)
-update_btn.grid(row=5, column=0, columnspan=2, pady=5)
+update_btn.grid(row=6, column=0, columnspan=2, pady=5)
 
 delete_btn = ctk.CTkButton(props_frame, text="Delete Caption", fg_color="red", 
                           hover_color="darkred", command=delete_selected_caption)
-delete_btn.grid(row=6, column=0, columnspan=2, pady=5)
+delete_btn.grid(row=7, column=0, columnspan=2, pady=5)
 
 props_frame.columnconfigure(1, weight=1)
 
 list_label = ctk.CTkLabel(left_frame, text="Caption List:")
 list_label.pack(pady=(10, 5))
 
-caption_list_frame = ctk.CTkScrollableFrame(left_frame, width=280, height=150)
-caption_list_frame.pack(pady=5, fill="both", expand=True)
+# Create a frame with scrollbar for caption list
+caption_list_container = ctk.CTkFrame(left_frame)
+caption_list_container.pack(fill="both", expand=True, pady=5)
+
+caption_list_frame = ctk.CTkScrollableFrame(caption_list_container, width=280, height=150)
+caption_list_frame.pack(fill="both", expand=True)
 bind_mousewheel(caption_list_frame, caption_list_frame)
 
 project_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
@@ -610,7 +755,11 @@ load_btn.pack(side="left", padx=5)
 
 export_btn = ctk.CTkButton(left_frame, text="Export Video", command=export_video, 
                           fg_color="green", hover_color="darkgreen", height=40)
-export_btn.pack(pady=10, side="bottom")
+export_btn.pack(pady=5, side="bottom")
+
+download_btn = ctk.CTkButton(left_frame, text="Download Clip", command=download_clip, 
+                            fg_color="purple", hover_color="darkpurple", height=40)
+download_btn.pack(pady=5, side="bottom")
 
 right_frame = ctk.CTkFrame(app)
 right_frame.pack(side="right", fill="both", expand=True, padx=10, pady=10)
