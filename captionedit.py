@@ -1,6 +1,6 @@
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, Scale
 import cv2
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import os
@@ -10,6 +10,10 @@ import numpy as np
 import threading
 import platform
 import subprocess
+import pygame  # Added for audio playback
+
+# Initialize pygame for audio
+pygame.mixer.init()
 
 # App setup
 ctk.set_appearance_mode("dark")
@@ -31,6 +35,9 @@ caption_buttons = []
 selected_caption = None
 playback_speed = 1.0
 available_fonts = []
+volume_level = 1.0  # Default volume (max)
+audio_thread = None
+stop_audio = False
 
 # Get available fonts
 def get_system_fonts():
@@ -165,12 +172,57 @@ def bind_mousewheel(widget, canvas):
         widget.bind("<Button-4>", lambda e: on_mousewheel(e, canvas))
         widget.bind("<Button-5>", lambda e: on_mousewheel(e, canvas))
 
+# Audio functions
+def play_audio():
+    global stop_audio, volume_level
+    
+    if not video_path:
+        return
+        
+    # Extract audio from video using ffmpeg
+    temp_audio = "temp_audio.wav"
+    try:
+        subprocess.run([
+            'ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', 
+            '-ar', '44100', '-ac', '2', '-y', temp_audio
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Load and play audio with pygame
+        pygame.mixer.music.load(temp_audio)
+        pygame.mixer.music.set_volume(volume_level)
+        pygame.mixer.music.play()
+        
+        # Keep the thread alive while audio is playing
+        while pygame.mixer.music.get_busy() and not stop_audio:
+            pygame.time.wait(100)
+            
+    except Exception as e:
+        print(f"Audio error: {e}")
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_audio):
+            os.remove(temp_audio)
+
+def stop_audio_playback():
+    global stop_audio
+    stop_audio = True
+    pygame.mixer.music.stop()
+
+def set_volume(vol):
+    global volume_level
+    volume_level = float(vol) / 100.0
+    volume_label.configure(text=f"Volume: {int(volume_level * 100)}%")
+    pygame.mixer.music.set_volume(volume_level)
+
 # Video functions
 def upload_video():
-    global video_path, cap, total_frames, video_fps, current_frame, is_playing
+    global video_path, cap, total_frames, video_fps, current_frame, is_playing, stop_audio
     
     if is_playing:
         toggle_playback()
+    
+    # Stop any audio playback
+    stop_audio_playback()
     
     file_path = filedialog.askopenfilename(
         filetypes=[("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv")]
@@ -251,11 +303,20 @@ def update_timeline_display():
         time_label.configure(text=time_display)
 
 def toggle_playback():
-    global is_playing
+    global is_playing, audio_thread, stop_audio
+    
     is_playing = not is_playing
     play_button.configure(text="Pause" if is_playing else "Play")
+    
     if is_playing:
+        # Start audio playback in a separate thread
+        stop_audio = False
+        audio_thread = threading.Thread(target=play_audio, daemon=True)
+        audio_thread.start()
         play_video()
+    else:
+        # Stop audio playback
+        stop_audio_playback()
 
 def play_video():
     global is_playing, current_frame
@@ -267,6 +328,7 @@ def play_video():
         current_frame = 0
         is_playing = False
         play_button.configure(text="Play")
+        stop_audio_playback()
         return
     
     show_frame(current_frame)
@@ -286,12 +348,19 @@ def go_to_start():
     current_frame = 0
     timeline_slider.set(0)
     show_frame(0)
+    # Restart audio from beginning if playing
+    if is_playing:
+        stop_audio_playback()
+        pygame.mixer.music.play(start=0)
 
 def go_to_end():
     global current_frame
     current_frame = total_frames - 1
     timeline_slider.set(1000)
     show_frame(current_frame)
+    # Stop audio if playing
+    if is_playing:
+        stop_audio_playback()
 
 # Caption functions
 def upload_captions():
@@ -484,7 +553,7 @@ def save_caption_project():
     messagebox.showinfo("Success", "Project saved successfully")
 
 def load_caption_project(file_path=None):
-    global video_path, cap, total_frames, video_fps, current_frame, captions
+    global video_path, cap, total_frames, video_fps, current_frame, captions, stop_audio
     
     if not file_path:
         file_path = filedialog.askopenfilename(
@@ -646,11 +715,27 @@ def download_clip():
 def cleanup():
     if cap:
         cap.release()
+    stop_audio_playback()
     app.destroy()
 
 app.protocol("WM_DELETE_WINDOW", cleanup)
 
 # UI Layout
+# Create a top frame for the download button
+top_frame = ctk.CTkFrame(app, height=50)
+top_frame.pack(side="top", fill="x", padx=10, pady=5)
+top_frame.pack_propagate(False)
+
+# Add download button to top right
+download_btn = ctk.CTkButton(top_frame, text="Download Clip", command=download_clip, 
+                            fg_color="purple", hover_color="darkpurple", height=40)
+download_btn.pack(side="right", padx=5)
+
+# Add export button next to it
+export_btn = ctk.CTkButton(top_frame, text="Export Video", command=export_video, 
+                          fg_color="green", hover_color="darkgreen", height=40)
+export_btn.pack(side="right", padx=5)
+
 left_frame = ctk.CTkFrame(app, width=300)
 left_frame.pack(side="left", fill="y", padx=10, pady=10)
 left_frame.pack_propagate(False)
@@ -681,21 +766,39 @@ speed_up_btn.pack(side="left", padx=2)
 end_btn = ctk.CTkButton(control_frame, text=">>", width=30, command=go_to_end)
 end_btn.pack(side="left", padx=2)
 
+# Volume control
+volume_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+volume_frame.pack(pady=5)
+
+volume_label = ctk.CTkLabel(volume_frame, text="Volume: 100%")
+volume_label.pack()
+
+volume_slider = ctk.CTkSlider(volume_frame, from_=0, to=100, command=set_volume)
+volume_slider.set(100)
+volume_slider.pack(pady=5)
+
 time_label = ctk.CTkLabel(left_frame, text="Duration: 00:00:00 / 00:00:00")
 time_label.pack(pady=5)
 
 caption_btn = ctk.CTkButton(left_frame, text="Upload Captions", command=upload_captions)
 caption_btn.pack(pady=5)
 
-caption_frame = ctk.CTkScrollableFrame(left_frame, width=280, height=150)
-caption_frame.pack(pady=5, fill="both", expand=True)
-bind_mousewheel(caption_frame, caption_frame)
+# Create a scrollable frame for caption buttons
+caption_scroll_frame = ctk.CTkScrollableFrame(left_frame, width=280, height=150)
+caption_scroll_frame.pack(pady=5, fill="both", expand=True)
+
+caption_frame = ctk.CTkFrame(caption_scroll_frame, fg_color="transparent")
+caption_frame.pack(fill="both", expand=True)
 
 props_label = ctk.CTkLabel(left_frame, text="Caption Properties:")
 props_label.pack(pady=(10, 5))
 
-props_frame = ctk.CTkFrame(left_frame)
-props_frame.pack(fill="x", pady=5)
+# Make the properties frame scrollable
+props_scroll_frame = ctk.CTkScrollableFrame(left_frame, width=280, height=250)
+props_scroll_frame.pack(fill="x", pady=5)
+
+props_frame = ctk.CTkFrame(props_scroll_frame, fg_color="transparent")
+props_frame.pack(fill="x")
 
 ctk.CTkLabel(props_frame, text="Text:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
 caption_text = ctk.CTkEntry(props_frame)
@@ -736,13 +839,9 @@ props_frame.columnconfigure(1, weight=1)
 list_label = ctk.CTkLabel(left_frame, text="Caption List:")
 list_label.pack(pady=(10, 5))
 
-# Create a frame with scrollbar for caption list
-caption_list_container = ctk.CTkFrame(left_frame)
-caption_list_container.pack(fill="both", expand=True, pady=5)
-
-caption_list_frame = ctk.CTkScrollableFrame(caption_list_container, width=280, height=150)
-caption_list_frame.pack(fill="both", expand=True)
-bind_mousewheel(caption_list_frame, caption_list_frame)
+# Create a scrollable frame for caption list
+caption_list_frame = ctk.CTkScrollableFrame(left_frame, width=280, height=150)
+caption_list_frame.pack(fill="both", expand=True, pady=5)
 
 project_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
 project_frame.pack(pady=10)
@@ -752,14 +851,6 @@ save_btn.pack(side="left", padx=5)
 
 load_btn = ctk.CTkButton(project_frame, text="Load Project", command=load_caption_project)
 load_btn.pack(side="left", padx=5)
-
-export_btn = ctk.CTkButton(left_frame, text="Export Video", command=export_video, 
-                          fg_color="green", hover_color="darkgreen", height=40)
-export_btn.pack(pady=5, side="bottom")
-
-download_btn = ctk.CTkButton(left_frame, text="Download Clip", command=download_clip, 
-                            fg_color="purple", hover_color="darkpurple", height=40)
-download_btn.pack(pady=5, side="bottom")
 
 right_frame = ctk.CTkFrame(app)
 right_frame.pack(side="right", fill="both", expand=True, padx=10, pady=10)
